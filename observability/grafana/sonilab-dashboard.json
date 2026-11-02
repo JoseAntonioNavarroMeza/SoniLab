@@ -1,0 +1,63 @@
+{
+  "title": "SoniLab - Observabilidad Integral (App, PostgreSQL, MongoDB, K8s)",
+  "uid": "sonilab-k8s-main",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Réplicas Activas del Backend (UP)",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "sum(up{job=\"sonilab-backend\"})", "legendFormat": "Pods Backend UP" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Latencia HTTP p95 (Segundos)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 9, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[2m])) by (le, route))",
+          "legendFormat": "p95 {{route}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Tráfico RPS y Errores por Código HTTP",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 9, "x": 15, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_request_duration_seconds_count[1m])) by (code)",
+          "legendFormat": "HTTP {{code}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "PostgreSQL - Conexiones Activas y Disponibilidad",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "pg_up", "legendFormat": "PostgreSQL UP" },
+        { "expr": "sum(pg_stat_activity_count{datname=\"sonilab_db\"})", "legendFormat": "Conexiones sonilab_db" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "MongoDB - Disponibilidad y Operaciones Documentales",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "expr": "mongodb_up", "legendFormat": "MongoDB UP" },
+        { "expr": "rate(mongodb_op_counters_total[1m])", "legendFormat": "Op {{type}}" }
+      ]
+    }
+  ]
+}

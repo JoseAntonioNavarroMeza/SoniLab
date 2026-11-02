@@ -1,0 +1,241 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-scripts
+  namespace: sonilab
+data:
+  01_schema.sql: |
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        email VARCHAR(120) UNIQUE NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        role VARCHAR(20) NOT NULL CHECK (role IN ('ADMIN', 'STUDENT')),
+        active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS instruments (
+        id SERIAL PRIMARY KEY,
+        serial_number VARCHAR(50) UNIQUE NOT NULL,
+        name VARCHAR(100) NOT NULL,
+        category VARCHAR(30) NOT NULL CHECK (category IN ('cuerda', 'viento', 'percusion', 'teclado')),
+        status VARCHAR(20) DEFAULT 'AVAILABLE' CHECK (status IN ('AVAILABLE', 'BORROWED', 'MAINTENANCE')),
+        active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS loans (
+        id SERIAL PRIMARY KEY,
+        user_id INT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+        instrument_id INT NOT NULL REFERENCES instruments(id) ON DELETE RESTRICT,
+        status VARCHAR(30) DEFAULT 'PENDING' CHECK (status IN (
+            'PENDING', 'APPROVED', 'REJECTED', 'IN_INSPECTION', 'RETURNED', 'RETURNED_WITH_DAMAGE'
+        )),
+        start_date DATE NOT NULL,
+        due_date DATE NOT NULL,
+        return_date DATE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS outbox_events (
+        id SERIAL PRIMARY KEY,
+        aggregate_id VARCHAR(50) NOT NULL,
+        event_type VARCHAR(50) NOT NULL,
+        payload JSONB NOT NULL,
+        status VARCHAR(20) DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'PROCESSED', 'FAILED')),
+        retry_count INT DEFAULT 0,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        processed_at TIMESTAMP WITH TIME ZONE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_loans_user_id ON loans(user_id);
+    CREATE INDEX IF NOT EXISTS idx_loans_status ON loans(status);
+    CREATE INDEX IF NOT EXISTS idx_instruments_category_status ON instruments(category, status);
+    CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox_events(status) WHERE status = 'PENDING';
+
+  02_seed.sql: |
+    INSERT INTO users (name, email, password_hash, role, active) VALUES
+    ('Profesor Administrador', 'admin@sonilab.edu', '$2b$10$Ff8bevaYwvWlWYXJke3J.ef6npWCM5o6E03NUPpLlgXl0wb1oTcda', 'ADMIN', true),
+    ('Alumno Juan Perez', 'juan.perez@sonilab.edu', '$2b$10$28psgKn6JtChPoPmArTH7u.YR4FOQgcux52ZCV707i1lB6OJH6uiK', 'STUDENT', true),
+    ('Alumna Maria Lopez', 'maria.lopez@sonilab.edu', '$2b$10$28psgKn6JtChPoPmArTH7u.YR4FOQgcux52ZCV707i1lB6OJH6uiK', 'STUDENT', true)
+    ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, active = true;
+
+    INSERT INTO instruments (serial_number, name, category, status, active)
+    SELECT 'STR-' || LPAD(i::text, 4, '0'),
+           CASE (i % 3) WHEN 0 THEN 'Guitarra Acústica Clásica ' || i WHEN 1 THEN 'Violín 4/4 Estudio ' || i ELSE 'Bajo Eléctrico Pasivo ' || i END,
+           'cuerda', 'AVAILABLE', true
+    FROM generate_series(1, 30) AS i
+    ON CONFLICT (serial_number) DO NOTHING;
+
+    INSERT INTO instruments (serial_number, name, category, status, active)
+    SELECT 'WND-' || LPAD(i::text, 4, '0'),
+           CASE (i % 3) WHEN 0 THEN 'Flauta Traversa ' || i WHEN 1 THEN 'Saxofón Alto ' || i ELSE 'Clarinete Bb ' || i END,
+           'viento', 'AVAILABLE', true
+    FROM generate_series(31, 60) AS i
+    ON CONFLICT (serial_number) DO NOTHING;
+
+    INSERT INTO instruments (serial_number, name, category, status, active)
+    SELECT 'PRC-' || LPAD(i::text, 4, '0'),
+           CASE (i % 2) WHEN 0 THEN 'Tarola de Concierto ' || i ELSE 'Xilófono Orquestal ' || i END,
+           'percusion', 'AVAILABLE', true
+    FROM generate_series(61, 90) AS i
+    ON CONFLICT (serial_number) DO NOTHING;
+
+    INSERT INTO instruments (serial_number, name, category, status, active)
+    SELECT 'KEY-' || LPAD(i::text, 4, '0'),
+           CASE (i % 2) WHEN 0 THEN 'Teclado MIDI 61 Teclas ' || i ELSE 'Sintetizador Analógico ' || i END,
+           'teclado', 'AVAILABLE', true
+    FROM generate_series(91, 120) AS i
+    ON CONFLICT (serial_number) DO NOTHING;
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sonilab-postgres
+  namespace: sonilab
+  labels:
+    app: sonilab-postgres
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+      name: postgres
+  selector:
+    app: sonilab-postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: sonilab-postgres
+  namespace: sonilab
+spec:
+  serviceName: "sonilab-postgres"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sonilab-postgres
+  template:
+    metadata:
+      labels:
+        app: sonilab-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+              name: postgres
+          env:
+            - name: POSTGRES_DB
+              value: "sonilab_db"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: sonilab-db-secrets
+                  key: PG_USER
+                  optional: true
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: sonilab-db-secrets
+                  key: PG_PASSWORD
+                  optional: true
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          resources:
+            requests:
+              cpu: 150m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U ${POSTGRES_USER:-sonilab_user} -d sonilab_db"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U ${POSTGRES_USER:-sonilab_user} -d sonilab_db"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+            - name: init-scripts
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: init-scripts
+          configMap:
+            name: postgres-init-scripts
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi
+---
+# CronJob de respaldos programados para PostgreSQL y MongoDB (Sección 7)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sonilab-backups-pvc
+  namespace: sonilab
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: sonilab-db-backup
+  namespace: sonilab
+spec:
+  schedule: "0 2 * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: sonilab-backup
+        spec:
+          serviceAccountName: sonilab-backup-sa
+          restartPolicy: OnFailure
+          containers:
+            - name: pg-backup
+              image: postgres:16-alpine
+              env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: sonilab-db-secrets
+                      key: PG_PASSWORD
+                      optional: true
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  TS=$(date +%Y%m%d_%H%M%S)
+                  mkdir -p /backups/postgres
+                  PGPASSWORD="${PGPASSWORD:-sonilab_password}" pg_dump -h sonilab-postgres -U sonilab_user -d sonilab_db -F c -f /backups/postgres/sonilab_pg_${TS}.dump
+                  sha256sum /backups/postgres/sonilab_pg_${TS}.dump > /backups/postgres/sonilab_pg_${TS}.dump.sha256
+                  find /backups/postgres -type f -mtime +7 -delete
+                  echo "Backup PostgreSQL completado: sonilab_pg_${TS}.dump"
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: sonilab-backups-pvc

@@ -1,0 +1,92 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sonilab
+  labels:
+    app.kubernetes.io/part-of: sonilab-system
+    # Pod Security Admission (Sección 6)
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: sonilab-quota
+  namespace: sonilab
+spec:
+  hard:
+    requests.cpu: "6"
+    requests.memory: 8Gi
+    limits.cpu: "12"
+    limits.memory: 14Gi
+    persistentvolumeclaims: "6"
+    pods: "25"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: sonilab-limits
+  namespace: sonilab
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 300m
+        memory: 256Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+---
+# ServiceAccounts de mínimo privilegio con automountServiceAccountToken desactivado
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sonilab-backend-sa
+  namespace: sonilab
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sonilab-frontend-sa
+  namespace: sonilab
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sonilab-backup-sa
+  namespace: sonilab
+automountServiceAccountToken: false
+---
+# RBAC: Rol de solo lectura operativa para diagnósticos del namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sonilab-operator-role
+  namespace: sonilab
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "services", "endpoints", "persistentvolumeclaims", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sonilab-operator-binding
+  namespace: sonilab
+subjects:
+  - kind: ServiceAccount
+    name: sonilab-backend-sa
+    namespace: sonilab
+roleRef:
+  kind: Role
+  name: sonilab-operator-role
+  apiGroup: rbac.authorization.k8s.io

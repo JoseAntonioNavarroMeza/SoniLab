@@ -1,0 +1,83 @@
+# 5 Alertas Operativas Obligatorias (Sección 10 del Documento Rector)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-sonilab-alerts
+  namespace: sonilab
+data:
+  alert-rules.yml: |
+    groups:
+      - name: sonilab_operational_alerts
+        rules:
+          # 1. Aplicación indisponible
+          - alert: SoniLabAppDown
+            expr: up{job="sonilab-backend"} == 0
+            for: 1m
+            labels:
+              severity: critical
+              service: sonilab-backend
+            annotations:
+              summary: "API de SoniLab indisponible"
+              description: "Ninguna réplica de sonilab-backend responde al scraping de métricas durante más de 1 minuto."
+              action: "Verificar kubectl get pods -n sonilab, revisar logs y estado de sondas /ready y /healthz."
+
+          # 2. Nodo no disponible
+          - alert: KubernetesNodeNotReady
+            expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+            for: 2m
+            labels:
+              severity: critical
+              layer: infrastructure
+            annotations:
+              summary: "Nodo worker de Kubernetes en estado NotReady"
+              description: "El nodo {{ $labels.node }} lleva más de 2 minutos sin reportar estado Ready."
+              action: "Ejecutar kubectl describe node {{ $labels.node }} y revisar servicio kubelet / containerd."
+
+          # 3. Tasa elevada de errores HTTP (5xx > 5%)
+          - alert: SoniLabHighErrorRate
+            expr: |
+              (
+                sum(rate(http_request_duration_seconds_count{code=~"5.."}[5m]))
+                /
+                clamp_min(sum(rate(http_request_duration_seconds_count[5m])), 1)
+              ) * 100 > 5
+            for: 2m
+            labels:
+              severity: warning
+              service: sonilab-backend
+            annotations:
+              summary: "Tasa elevada de errores HTTP 5xx en SoniLab (> 5%)"
+              description: "El porcentaje de respuestas HTTP 5xx supera el 5% en los últimos 5 minutos."
+              action: "Inspeccionar logs del backend y conectividad hacia PostgreSQL / MongoDB."
+
+          # 4. Saturación de recursos de CPU o Memoria (> 85% del límite)
+          - alert: PodHighResourceSaturation
+            expr: |
+              (
+                sum by (pod) (rate(container_cpu_usage_seconds_total{namespace="sonilab"}[2m]))
+                /
+                sum by (pod) (kube_pod_container_resource_limits{namespace="sonilab",resource="cpu"})
+              ) * 100 > 85
+            for: 3m
+            labels:
+              severity: warning
+              layer: capacity
+            annotations:
+              summary: "Saturación de CPU en Pod {{ $labels.pod }} (> 85%)"
+              description: "El consumo de CPU supera el 85% del limit configurado durante 3 minutos."
+              action: "Verificar escalado del HPA (kubectl get hpa -n sonilab) y capacidad de los nodos."
+
+          # 5. Respaldo fallido o vencido (> 26 horas sin éxito)
+          - alert: DatabaseBackupFailedOrStale
+            expr: |
+              (time() - kube_cronjob_status_last_successful_time{namespace="sonilab",cronjob="sonilab-db-backup"} > 93600)
+              or
+              (kube_job_status_failed{namespace="sonilab",job_name=~"sonilab-db-backup.*"} > 0)
+            for: 5m
+            labels:
+              severity: critical
+              layer: data-continuity
+            annotations:
+              summary: "Respaldo de base de datos SoniLab fallido o vencido"
+              description: "El CronJob sonilab-db-backup falló o han transcurrido más de 26 horas desde el último respaldo exitoso."
+              action: "Revisar logs del Job de respaldo y disponibilidad del PVC sonilab-backups-pvc."

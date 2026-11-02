@@ -1,0 +1,38 @@
+# ==============================================================================
+# SoniLab - Reglas de Exclusión de Secretos, Certificados y Artefactos (Sección 6)
+# ==============================================================================
+
+# 1. Variables de entorno y credenciales sensibles (NUNCA subir a Git)
+.env
+.env.*
+!.env.example
+**/secrets.yaml
+**/*-secret.yaml
+**/secret-*.yaml
+
+# 2. Certificados TLS y llaves privadas
+*.pem
+*.key
+*.crt
+*.csr
+certs/
+tls/
+
+# 3. Respaldos de bases de datos y dumps locales
+backups/
+*.dump
+*.sql.gz
+*.archive.gz
+*.sha256
+
+# 4. Dependencias y artefactos de compilación
+node_modules/
+frontend/dist/
+backend/dist/
+npm-debug.log*
+
+# 5. Archivos de sistema y kubeconfigs locales
+kubeconfig*
+.kube/
+.DS_Store
+Thumbs.db

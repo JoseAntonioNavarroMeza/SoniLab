@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sonilab-postgres
+    restart: always
+    environment:
+      POSTGRES_DB: sonilab_db
+      POSTGRES_USER: sonilab_user
+      POSTGRES_PASSWORD: sonilab_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./database/postgres/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+      - ./database/postgres/02_seed.sql:/docker-entrypoint-initdb.d/02_seed.sql
+
+  mongo:
+    image: mongo:7.0
+    container_name: sonilab-mongo
+    restart: always
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: rootpassword
+      MONGO_INITDB_DATABASE: sonilab_docs
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodata:/data/db
+      - ./database/mongo/01_init.js:/docker-entrypoint-initdb.d/01_init.js:ro
+
+volumes:
+  pgdata:
+  mongodata:

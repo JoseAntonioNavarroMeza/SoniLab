@@ -1,0 +1,125 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongo-init-scripts
+  namespace: sonilab
+data:
+  01_init.js: |
+    db = db.getSiblingDB('sonilab_docs');
+
+    db.createCollection('technical_inspections', {
+      validator: {
+        $jsonSchema: {
+          bsonType: 'object',
+          required: ['loan_id', 'instrument_id', 'inspector_id', 'checklist', 'passed', 'inspected_at'],
+          properties: {
+            loan_id: { bsonType: 'int', description: 'ID referencial del préstamo en PostgreSQL' },
+            instrument_id: { bsonType: 'int', description: 'ID referencial del instrumento' },
+            inspector_id: { bsonType: 'int', description: 'ID del usuario administrador' },
+            passed: { bsonType: 'bool', description: 'Resultado de la inspección' },
+            checklist: {
+              bsonType: 'object',
+              description: 'Checklist dinámico y polimórfico según categoría de instrumento'
+            },
+            notes: { bsonType: 'string' },
+            inspected_at: { bsonType: 'date' }
+          }
+        }
+      }
+    });
+
+    db.technical_inspections.createIndex({ loan_id: 1 }, { unique: true });
+
+    db.createCollection('loan_audit_log');
+    db.loan_audit_log.createIndex({ loan_id: 1 });
+    db.loan_audit_log.createIndex({ created_at: -1 });
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sonilab-mongo
+  namespace: sonilab
+  labels:
+    app: sonilab-mongo
+spec:
+  type: ClusterIP
+  ports:
+    - port: 27017
+      targetPort: 27017
+      name: mongo
+  selector:
+    app: sonilab-mongo
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: sonilab-mongo
+  namespace: sonilab
+spec:
+  serviceName: "sonilab-mongo"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sonilab-mongo
+  template:
+    metadata:
+      labels:
+        app: sonilab-mongo
+    spec:
+      containers:
+        - name: mongo
+          image: mongo:7.0
+          ports:
+            - containerPort: 27017
+              name: mongo
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: sonilab-db-secrets
+                  key: MONGO_USER
+                  optional: true
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: sonilab-db-secrets
+                  key: MONGO_PASSWORD
+                  optional: true
+            - name: MONGO_INITDB_DATABASE
+              value: "sonilab_docs"
+          resources:
+            requests:
+              cpu: 150m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            exec:
+              command: ["mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 10
+          volumeMounts:
+            - name: mongodata
+              mountPath: /data/db
+            - name: init-scripts
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: init-scripts
+          configMap:
+            name: mongo-init-scripts
+  volumeClaimTemplates:
+    - metadata:
+        name: mongodata
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi

@@ -1,0 +1,145 @@
+# 1. Política por defecto: Denegar todo el tráfico de entrada y salida no autorizado
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: sonilab
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# 2. Permitir resolución DNS hacia kube-system para todos los Pods del namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: sonilab
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# 3. Frontend: recibe tráfico desde Ingress Controller y puede conectarse al Backend
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-netpol
+  namespace: sonilab
+spec:
+  podSelector:
+    matchLabels:
+      app: sonilab-frontend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: sonilab-backend
+      ports:
+        - protocol: TCP
+          port: 3000
+---
+# 4. Backend: recibe tráfico de Frontend/Ingress y Prometheus; sale solo hacia Postgres y Mongo
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-netpol
+  namespace: sonilab
+spec:
+  podSelector:
+    matchLabels:
+      app: sonilab-backend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 3000
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: sonilab-postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app: sonilab-mongo
+      ports:
+        - protocol: TCP
+          port: 27017
+---
+# 5. PostgreSQL: acepta conexiones únicamente desde el Backend, Backups y Exporter
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-netpol
+  namespace: sonilab
+spec:
+  podSelector:
+    matchLabels:
+      app: sonilab-postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: sonilab-backend
+        - podSelector:
+            matchLabels:
+              app: sonilab-backup
+        - podSelector:
+            matchLabels:
+              app: postgres-exporter
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+# 6. MongoDB: acepta conexiones únicamente desde el Backend, Backups y Exporter
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mongo-netpol
+  namespace: sonilab
+spec:
+  podSelector:
+    matchLabels:
+      app: sonilab-mongo
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: sonilab-backend
+        - podSelector:
+            matchLabels:
+              app: sonilab-backup
+        - podSelector:
+            matchLabels:
+              app: mongodb-exporter
+      ports:
+        - protocol: TCP
+          port: 27017
