@@ -26,11 +26,19 @@ spec:
             - containerPort: 9187
               name: metrics
           env:
-            - name: DATA_SOURCE_NAME
+            - name: DATA_SOURCE_URI
+              value: "sonilab-postgres.sonilab.svc.cluster.local:5432/sonilab_db?sslmode=disable"
+            - name: DATA_SOURCE_USER
               valueFrom:
                 secretKeyRef:
                   name: sonilab-db-secrets
-                  key: PG_EXPORTER_DSN
+                  key: PG_USER
+                  optional: true
+            - name: DATA_SOURCE_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: sonilab-db-secrets
+                  key: PG_PASSWORD
                   optional: true
           resources:
             requests:
