@@ -1,7 +1,7 @@
 # SoniLab — Sistema de Control de Préstamos y Trazabilidad de Instrumentos Musicales
 
 Proyecto integrador de **Infraestructura de Servicios** (Tecnológico Nacional de México — Instituto Tecnológico de Morelia).  
-**Alumno:** José Antonio Navarro Meza (`22121327`) | **Asesor:** Roque Trujillo Ramos
+**Alumno:** José Antonio Navarro Meza | **Asesor:** Roque Trujillo Ramos
 
 ---
 
